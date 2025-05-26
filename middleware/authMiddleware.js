@@ -25,6 +25,6 @@ exports.protect = async (req, res, next) => {
     }
     next();
   } catch (error) {
-    return res.status(401).json({ message: 'Token is invalid or expired' });
+    return res.status(401).json({ message: 'Token is invalid or expired,please login again' });
   }
 };
