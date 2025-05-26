@@ -1,61 +1,202 @@
 const Restaurant = require('../models/Restaurant');
 const { faker } = require('@faker-js/faker');
 
-// @desc Add new restaurant
-exports.addRestaurant = async (req, res) => {
+
+
+exports.getRestaurants = async (req, res) => {
   try {
-    const { name, cuisine, location, rating } = req.body;
+    const {
+      page = 1,
+      limit = 10,
+      search = '',
+      cuisine = '',
+      location = '',
+      rating = 0,
+    } = req.body;
 
-    if (!name || !cuisine || !location || rating == null) {
-      return res.status(400).json({ error: 'All fields are required' });
-    }
+    const finalLimit = limit > 0 && limit <= 20 ? parseInt(limit) : 10;
+    const finalPage = parseInt(page);
+    const skip = (finalPage - 1) * finalLimit;
 
-    const newRestaurant = new Restaurant({ name, cuisine, location, rating });
-    await newRestaurant.save();
+    // 🔍 Unified search filter (across multiple fields)
+    const searchQuery = search.toLowerCase();
 
-    res.status(201).json({ message: 'Restaurant added successfully', data: newRestaurant });
+    // Build the dynamic filter
+    const filter = {
+      $or: [
+        { name: { $regex: searchQuery, $options: 'i' } },
+        { cuisine: { $regex: searchQuery, $options: 'i' } },
+        { location: { $regex: searchQuery, $options: 'i' } },
+        { rating: parseFloat(searchQuery) || -1 }, // Convert to number if possible
+      ],
+    };
+
+    // If nothing is being searched, remove the filter
+    if (!search) delete filter.$or;
+
+    const total = await Restaurant.countDocuments(filter);
+
+    const restaurants = await Restaurant.find(filter)
+      .skip(skip)
+      .limit(finalLimit);
+
+    res.status(200).json({
+      success: true,
+      total,
+      page: finalPage,
+      totalPages: Math.ceil(total / finalLimit),
+      results: restaurants.length,
+      data: restaurants,
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({
+      success: false,
+      error: 'Something went wrong',
+      details: error.message,
+    });
   }
 };
 
-// Import Restaurant model
 
-// @desc Get restaurants with optional search and pagination
-exports.getRestaurants = async (req, res) => {
+exports.getSpecificRestaurants = async (req, res) => {
   try {
-    // Get values from query string (with default values)
-    const page = parseInt(req.query.page) || 1;     // current page
-    const limit = parseInt(req.query.limit) || 10;  // results per page
-    const search = req.query.search || '';          // search text
+    const {
+      page = 1,
+      limit = 10,
+      search = '',
+      cuisine = '',
+      location = '',
+      rating,
+    } = req.body;
 
-    // Calculate how many records to skip
-    const skip = (page - 1) * limit;
+    const finalLimit = limit > 0 && limit <= 20 ? parseInt(limit) : 10;
+    const finalPage = parseInt(page);
+    const skip = (finalPage - 1) * finalLimit;
 
-    // If there's a search term, create a filter to find matching names
-    const filter = search
-      ? { name: { $regex: search, $options: 'i' } }  // case-insensitive search
-      : {}; // empty filter means "get everything"
+    const filter = {};
 
-    // Count how many total results match the search
+    // 🔍 Optional search (across multiple fields)
+    if (search) {
+      const searchQuery = search.toLowerCase();
+      filter.$or = [
+        { name: { $regex: searchQuery, $options: 'i' } },
+        { cuisine: { $regex: searchQuery, $options: 'i' } },
+        { location: { $regex: searchQuery, $options: 'i' } },
+        { rating: parseFloat(searchQuery) || -1 },
+      ];
+    }
+
+    // ✅ Exact match for cuisine
+    if (cuisine) {
+      filter.cuisine = cuisine;
+    }
+
+    // ✅ Exact match for location
+    if (location) {
+      filter.location = location;
+    }
+
+    // ⭐ Rating greater than or equal
+    if (rating !== undefined && rating !== '') {
+      filter.rating = { $gte: parseFloat(rating) };
+    }
+
     const total = await Restaurant.countDocuments(filter);
 
-    // Find restaurants with the filter, skip and limit
     const restaurants = await Restaurant.find(filter)
       .skip(skip)
-      .limit(limit);
+      .limit(finalLimit);
 
-    // Send the result back
     res.status(200).json({
-      total,                          // total matching records
-      page,                           // current page
-      totalPages: Math.ceil(total / limit), // total number of pages
-      results: restaurants.length,    // how many results we got in this page
-      data: restaurants               // the actual data
+      success: true,
+      total,
+      page: finalPage,
+      totalPages: Math.ceil(total / finalLimit),
+      results: restaurants.length,
+      data: restaurants,
     });
   } catch (error) {
-    // If something goes wrong, send an error
-    res.status(500).json({ error: 'Something went wrong', details: error.message });
+    res.status(500).json({
+      success: false,
+      error: 'Something went wrong',
+      details: error.message,
+    });
+  }
+};
+
+exports.getAllCuisines = async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.body;
+
+    const finalLimit = limit > 0 && limit <= 20 ? parseInt(limit) : 10;
+    const finalPage = parseInt(page);
+    const skip = (finalPage - 1) * finalLimit;
+
+    // Fetch all distinct cuisines
+    const allCuisines = await Restaurant.distinct('cuisine');
+
+    // Normalize: remove falsy values, trim, and remove duplicates
+    const normalizedCuisines = allCuisines
+      .filter(c => typeof c === 'string' && c.trim() !== '')
+      .map(c => c.trim())
+      .filter((value, index, self) => self.indexOf(value) === index);
+
+    const total = normalizedCuisines.length;
+    const paginatedCuisines = normalizedCuisines.slice(skip, skip + finalLimit);
+
+    res.status(200).json({
+      success: true,
+      page: finalPage,
+      limit: finalLimit,
+      total,
+      totalPages: Math.ceil(total / finalLimit),
+      results: paginatedCuisines.length,
+      data: paginatedCuisines,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch cuisines',
+      details: error.message,
+    });
+  }
+};
+
+exports.getAllLocations = async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.body;
+
+    const finalLimit = limit > 0 && limit <= 20 ? parseInt(limit) : 10;
+    const finalPage = parseInt(page);
+    const skip = (finalPage - 1) * finalLimit;
+
+    // Fetch all distinct locations
+    const allLocations = await Restaurant.distinct('location');
+
+    // Normalize: remove falsy values, trim, and remove duplicates
+    const normalizedLocations = allLocations
+      .filter(loc => typeof loc === 'string' && loc.trim() !== '')
+      .map(loc => loc.trim())
+      .filter((value, index, self) => self.indexOf(value) === index);
+
+    const total = normalizedLocations.length;
+    const paginatedLocations = normalizedLocations.slice(skip, skip + finalLimit);
+
+    res.status(200).json({
+      success: true,
+      page: finalPage,
+      limit: finalLimit,
+      total,
+      totalPages: Math.ceil(total / finalLimit),
+      results: paginatedLocations.length,
+      data: paginatedLocations,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch locations',
+      details: error.message,
+    });
   }
 };
 
